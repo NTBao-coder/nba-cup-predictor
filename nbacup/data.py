@@ -41,11 +41,26 @@ def _to_games(rows: pd.DataFrame, season: str) -> pd.DataFrame:
     return g.sort_values(["GAME_DATE", "GAME_ID"]).reset_index(drop=True)
 
 
+def _read_games_csv(path: Path) -> pd.DataFrame:
+    # GAME_ID phải đọc dạng chuỗi, nếu không "0022600030" thành 22600030
+    return pd.read_csv(path, parse_dates=["GAME_DATE"], dtype={"GAME_ID": str})
+
+
+def _warn_stale(path: Path, err: Exception) -> None:
+    print(f"    ! NBA API lỗi ({type(err).__name__}), dùng dữ liệu cache cũ: {path.name}")
+
+
 def load_games(season: str, refresh: bool = False) -> pd.DataFrame:
     path = DATA_DIR / f"games_{season}.csv"
     if path.exists() and not refresh:
-        return pd.read_csv(path, parse_dates=["GAME_DATE"], dtype={"GAME_ID": str})
-    games = _to_games(_fetch_team_rows(season), season)
+        return _read_games_csv(path)
+    try:
+        games = _to_games(_fetch_team_rows(season), season)
+    except Exception as err:  # stats.nba.com hay chặn hoặc timeout
+        if not path.exists():
+            raise
+        _warn_stale(path, err)
+        return _read_games_csv(path)
     games.to_csv(path, index=False)
     return games
 
@@ -59,9 +74,22 @@ def load_all_games(seasons: list[str], current: str, refresh: bool = False) -> p
     return pd.concat(frames, ignore_index=True)
 
 
+def read_cup_standings_csv(path: Path) -> pd.DataFrame:
+    """Đọc bảng NBA Cup đã cache. Cột gameId1..4 phải là chuỗi để giữ số 0 ở đầu,
+    nếu không cup_group_games sẽ không khớp được trận nào với bảng kết quả."""
+    return pd.read_csv(path, dtype={f"gameId{i}": str for i in range(1, 5)})
+
+
 def load_cup_standings(season: str) -> pd.DataFrame:
-    df = iststandings.ISTStandings(season=season, timeout=60).get_data_frames()[0]
-    df.to_csv(DATA_DIR / f"cup_standings_{season}.csv", index=False)
+    path = DATA_DIR / f"cup_standings_{season}.csv"
+    try:
+        df = iststandings.ISTStandings(season=season, timeout=60).get_data_frames()[0]
+    except Exception as err:  # stats.nba.com hay chặn hoặc timeout
+        if not path.exists():
+            raise
+        _warn_stale(path, err)
+        return read_cup_standings_csv(path)
+    df.to_csv(path, index=False)
     return df
 
 

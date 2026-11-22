@@ -175,7 +175,7 @@ Với `LOC = 0`, mô hình cho được xác suất của trận sân trung lậ
 - **Chưa tính chấn thương** và thay đổi đội hình giữa mùa.
 - **Một số trận lịch sử ở sân trung lập** (Paris, Mexico City, Las Vegas) vẫn được tính là sân nhà.
 - **Ngày nghỉ trong mô phỏng** được giả định bằng nhau (2 ngày) cho mọi đội.
-- **stats.nba.com** đôi khi chặn hoặc phản hồi chậm; khi đó hãy chạy lại sau.
+- **stats.nba.com** đôi khi chặn hoặc phản hồi chậm. Khi đó pipeline dùng dữ liệu cache trong `data/` (có in cảnh báo), nên kết quả có thể cũ hơn ngày chạy. Lần chạy đầu tiên chưa có cache thì vẫn cần API hoạt động.
 
 ### Hướng phát triển
 
