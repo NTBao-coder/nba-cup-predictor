@@ -1,115 +1,108 @@
-# 🏀 NBA Cup Predictor
+# NBA Cup Predictor
 
-Sản phẩm AI dự đoán **đội vô địch NBA Cup (Emirates NBA Cup) mùa 2026-27** bằng
-**Logistic Regression**, dữ liệu lấy trực tiếp từ NBA Stats API (thư viện [`nba_api`](https://github.com/swar/nba_api)).
+Dự đoán nhà vô địch Emirates NBA Cup 2026-27 bằng mô hình logistic regression ở cấp độ trận đấu kết hợp mô phỏng Monte Carlo. Dữ liệu lấy từ NBA Stats API qua thư viện [`nba_api`](https://github.com/swar/nba_api).
 
-> Ý tưởng: Logistic Regression **không** đoán thẳng nhà vô địch (mỗi năm chỉ có 1 mẫu).
-> Thay vào đó mô hình học **xác suất thắng của từng trận đấu** từ ~7.000 trận lịch sử,
-> rồi **mô phỏng Monte Carlo** toàn bộ giải (vòng bảng còn lại → tứ kết → bán kết → chung kết)
-> hàng chục nghìn lần để ra xác suất vô địch của mỗi đội.
+## Phương pháp
 
----
+Mỗi mùa giải chỉ có một nhà vô địch, quá ít mẫu để mô hình hoá trực tiếp. Thay vào đó, mô hình ước lượng xác suất một đội thắng đội kia trong từng trận, được huấn luyện trên khoảng 7.000 trận mùa giải chính thức từ 2020-21. Các xác suất này được dùng để mô phỏng phần còn lại của giải (vòng bảng, tứ kết, bán kết, chung kết) 20.000 lần. Xác suất vô địch của một đội là tỉ lệ số lần đội đó vô địch trong các lần mô phỏng.
 
-## 📋 Kế hoạch dự án
+## Mô hình
 
-| Giai đoạn | Nội dung | Trạng thái |
-|---|---|---|
-| 1. Thu thập dữ liệu | Lấy kết quả mùa giải 2020-21 → nay (`LeagueGameFinder`), bảng xếp hạng & lịch NBA Cup (`ISTStandings`). Cache ra CSV | ✅ Xong |
-| 2. Tạo feature | Chỉ số của mỗi đội **trước** từng trận (không rò rỉ dữ liệu), kết hợp với mùa trước | ✅ Xong |
-| 3. Huấn luyện mô hình | Logistic Regression đối xứng, có biến sân nhà / sân trung lập | ✅ Xong |
-| 4. Kiểm định | Train các mùa cũ, test trên mùa 2025-26 (accuracy, log-loss, Brier) | ✅ Xong |
-| 5. Mô phỏng giải | Monte Carlo đúng thể thức NBA Cup + luật tiebreak | ✅ Xong |
-| 6. Cải thiện feature | Offensive/Defensive rating, pace, chấn thương, back-to-back, Elo | ⏳ Kế hoạch |
-| 7. Giao diện | Dashboard web (Streamlit) hiển thị xác suất, cập nhật mỗi ngày | ⏳ Kế hoạch |
-| 8. Tự động hoá | GitHub Actions chạy dự đoán hằng ngày trong mùa NBA Cup | ⏳ Kế hoạch |
-| 9. Đánh giá sau giải | So sánh dự đoán với kết quả thực tế của NBA Cup 2026 | ⏳ Kế hoạch |
+Mỗi trận được mô tả bằng chênh lệch giữa hai đội trên các đặc trưng sau, chỉ dùng thông tin có trước trận đấu:
 
----
-
-## 🧠 Phương pháp
-
-### Feature (hiệu số giữa đội A và đội B)
-
-| Feature | Ý nghĩa |
+| Đặc trưng | Mô tả |
 |---|---|
-| `d_margin` | Chênh lệch hiệu số điểm trung bình/trận |
-| `d_winpct` | Chênh lệch tỉ lệ thắng |
-| `d_last10` | Chênh lệch phong độ 10 trận gần nhất |
-| `d_rest` | Chênh lệch số ngày nghỉ |
-| `LOC` | `1` = A đá sân nhà, `0` = sân trung lập (Las Vegas), `-1` = sân khách |
+| `d_margin` | Hiệu số điểm trung bình mỗi trận |
+| `d_winpct` | Tỉ lệ thắng |
+| `d_last10` | Hiệu số điểm trung bình 10 trận gần nhất |
+| `d_rest` | Số ngày nghỉ |
+| `LOC` | Địa điểm: 1 sân nhà, 0 sân trung lập, −1 sân khách |
 
-Đầu mùa chỉ số rất nhiễu, nên chỉ số mùa hiện tại được "co" về chỉ số mùa trước:
+Chỉ số đầu mùa nhiều nhiễu, nên giá trị mùa hiện tại được kéo về phía mùa trước:
 
 ```
-blended = (n · mùa_này + K · mùa_trước) / (n + K),   K = 12
+blended = (n · mùa_này + K · mùa_trước) / (n + K),  K = 12
 ```
 
-### Mô hình
+Bộ phân loại là `LogisticRegression(fit_intercept=False)` trên dữ liệu được chuẩn hoá không trừ trung bình. Mỗi trận xuất hiện hai lần, một lần từ góc nhìn của mỗi đội với dấu đặc trưng đảo ngược, nên mô hình đối xứng: P(A thắng B) = 1 − P(B thắng A). Cách này cũng cho phép dự đoán các trận ở sân trung lập.
 
-- `StandardScaler(with_mean=False)` + `LogisticRegression(fit_intercept=False)`
-- Mỗi trận được đưa vào **2 lần** (góc nhìn chủ nhà và góc nhìn khách, đổi dấu feature),
-  nên mô hình đối xứng: `P(A thắng B) = 1 − P(B thắng A)`. Nhờ vậy dự đoán được cả trận sân trung lập.
+## Mô phỏng giải đấu
 
-### Mô phỏng NBA Cup
+- 30 đội chia thành 6 bảng, mỗi bảng 5 đội (3 bảng mỗi miền); mỗi đội đá 4 trận vòng bảng.
+- Mỗi miền có 3 đội nhất bảng (hạt giống 1–3) và 1 đội wild card (hạt giống 4) vào tứ kết.
+- Tứ kết: 1 gặp 4, 2 gặp 3, trên sân của hạt giống cao hơn. Bán kết và chung kết đá ở sân trung lập tại Las Vegas.
+- Tiêu chí xếp hạng bảng: số trận thắng, đối đầu, hiệu số, ngẫu nhiên.
+- Cách biệt điểm mỗi trận được lấy mẫu từ N(μ, 12.5), với μ chọn sao cho P(cách biệt > 0) bằng xác suất thắng của mô hình. Cách biệt cần cho tiêu chí hiệu số.
 
-- 6 bảng × 5 đội; nhất bảng (hạt giống 1-3) + 1 wild card (hạt giống 4) mỗi miền vào tứ kết.
-- Tứ kết: 1 vs 4, 2 vs 3 trên sân của hạt giống cao hơn. Bán kết và chung kết đá ở sân trung lập.
-- Xếp hạng bảng: số trận thắng → đối đầu → hiệu số → ngẫu nhiên.
-- Cách biệt điểm mỗi trận mô phỏng được lấy mẫu từ `N(μ, 12.5)`, với μ chọn sao cho khớp xác suất
-  thắng của mô hình (cần cho tiebreak theo hiệu số).
+## Kết quả
 
----
+Kiểm định ngoài mẫu: huấn luyện trên 2021-22 đến 2024-25, kiểm tra trên 2025-26 (1.225 trận):
 
-## 📊 Kết quả hiện tại (14/11/2026)
-
-Kiểm định trên mùa 2025-26 (1.225 trận):
-
-| Chỉ số | Mô hình | Baseline "chủ nhà luôn thắng" |
+| Chỉ số | Mô hình | Baseline (đội chủ nhà thắng) |
 |---|---|---|
-| Accuracy | **0.688** | 0.554 |
-| Log-loss | 0.597 | — |
+| Accuracy | 0.688 | 0.554 |
+| Log loss | 0.597 | — |
 | Brier score | 0.205 | — |
 
-Top ứng viên vô địch (vòng bảng: 28/60 trận đã đá):
+Xác suất vô địch tính đến ngày 14/11/2026, khi đã đá 28/60 trận vòng bảng:
 
 | Đội | Bảng | Thành tích | Vào tứ kết | Vô địch |
 |---|---|---|---|---|
-| BOS | East C | 2-0 | 96% | **~26%** |
-| SAS | West C | 2-0 | 87% | ~24% |
-| DET | East A | 1-0 | 82% | ~14% |
-| MIN | West B | 2-0 | 71% | ~12% |
-| OKC | West B | 1-1 | 43% | ~4% |
+| BOS | East C | 2-0 | 96% | 26% |
+| SAS | West C | 2-0 | 87% | 24% |
+| DET | East A | 1-0 | 82% | 14% |
+| MIN | West B | 2-0 | 71% | 12% |
+| OKC | West B | 1-1 | 43% | 4% |
 
-*(Xác suất thay đổi mỗi ngày khi có kết quả mới. Chạy lại `predict.py` để cập nhật.)*
+Xác suất thay đổi khi có kết quả mới. Chạy `predict.py` để có dự đoán mới nhất.
 
----
-
-## 🚀 Cách chạy
+## Cách sử dụng
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python predict.py                 # mặc định: mùa 2026-27, 20.000 lần mô phỏng
-python predict.py --sims 50000    # mô phỏng nhiều hơn
-python predict.py --refresh       # tải lại cả dữ liệu các mùa cũ
+python predict.py
 ```
 
-Kết quả được lưu ở `output/cup_prediction_2026-27.csv`.
+Tuỳ chọn:
 
-## 📁 Cấu trúc
+```
+--season    Mùa giải cần dự đoán (mặc định: 2026-27)
+--sims      Số lần mô phỏng (mặc định: 20000)
+--history   Số mùa dữ liệu huấn luyện (mặc định: 6)
+--refresh   Tải lại dữ liệu các mùa cũ đã lưu
+```
+
+Kết quả được ghi vào `output/cup_prediction_<season>.csv`.
+
+## Cấu trúc
 
 ```
 nbacup/
-  data.py       # gọi NBA API, cache CSV, lấy lịch vòng bảng NBA Cup
-  features.py   # tạo feature không rò rỉ dữ liệu
-  model.py      # Logistic Regression, kiểm định, ma trận xác suất
-  simulate.py   # mô phỏng Monte Carlo NBA Cup
-predict.py      # chạy toàn bộ pipeline
+  data.py       Lấy và lưu dữ liệu NBA API, dựng lịch vòng bảng
+  features.py   Đặc trưng của đội trước mỗi trận
+  model.py      Logistic regression, kiểm định, xác suất từng cặp đội
+  simulate.py   Mô phỏng Monte Carlo giải đấu
+predict.py      Chạy toàn bộ pipeline
 ```
 
-## ⚠️ Hạn chế
+## Lộ trình
 
-- Chưa tính chấn thương và thay đổi đội hình giữa mùa.
-- Vài trận lịch sử đá ở sân trung lập (Paris, Mexico City, Las Vegas) vẫn được tính là sân nhà.
-- stats.nba.com đôi khi chặn hoặc phản hồi chậm; khi đó hãy chạy lại sau.
+| Giai đoạn | Trạng thái |
+|---|---|
+| Thu thập dữ liệu từ NBA Stats API | Hoàn thành |
+| Xây dựng đặc trưng trước trận | Hoàn thành |
+| Mô hình logistic regression | Hoàn thành |
+| Kiểm định ngoài mẫu | Hoàn thành |
+| Mô phỏng giải đấu | Hoàn thành |
+| Bổ sung đặc trưng: offensive/defensive rating, pace, chấn thương, back-to-back, Elo | Dự kiến |
+| Dashboard web cập nhật hằng ngày | Dự kiến |
+| Chạy tự động hằng ngày bằng GitHub Actions | Dự kiến |
+| Đánh giá sau giải so với kết quả thực tế | Dự kiến |
+
+## Hạn chế
+
+- Chưa mô hình hoá chấn thương và thay đổi đội hình giữa mùa.
+- Một số trận lịch sử đá ở sân trung lập (Paris, Mexico City, Las Vegas) vẫn được tính là sân nhà.
+- stats.nba.com đôi khi giới hạn hoặc phản hồi chậm; chạy lại nếu tải dữ liệu thất bại.
